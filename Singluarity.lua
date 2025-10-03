@@ -112,6 +112,10 @@ local lastBlinkTime = os.time()
 -- Draw singularity progress bar
 local function drawProgress(label, current, max, y, thresholdReached, isCrafting, completed)
   local w, _ = gpu.getResolution()
+  -- Fill entire line with black to prevent see-through
+  gpu.setBackground(0x000000)
+  gpu.fill(1, y, w, 1, " ")
+
   local text = string.format("%-12s %s / %s", label, formatNumber(current), formatNumber(max))
   if #text > w - 12 then text = text:sub(1, w - 12) .. "…" end
 
@@ -128,6 +132,10 @@ local function drawProgress(label, current, max, y, thresholdReached, isCrafting
   -- Draw filled bar
   gpu.setBackground(getColor(percent, thresholdReached))
   gpu.fill(#text + 2, y, math.min(filled, w - #text - 4), 1, " ")
+
+  -- Draw empty bar part (ensures full line is black)
+  gpu.setBackground(0x000000)
+  gpu.fill(#text + 2 + filled, y, math.max(barWidth - filled, 0), 1, " ")
 
   -- Draw blinking "Crafting..." inside bar
   if isCrafting then
@@ -154,15 +162,14 @@ local function drawProgress(label, current, max, y, thresholdReached, isCrafting
       gpu.set(checkPos, y, "✔")
     end
   end
-
-  -- Draw empty part
-  gpu.setBackground(0x000000)
-  gpu.fill(#text + 2 + filled, y, math.max(barWidth - filled, 0), 1, " ")
 end
 
--- Draw global progress bar
+-- Corrected global progress bar
 local function drawGlobalProgress(totalHave, totalRequired, y)
   local w, _ = gpu.getResolution()
+  gpu.setBackground(0x000000)
+  gpu.fill(1, y, w, 1, " ") -- full line background
+
   local globalPercent = totalHave / totalRequired
   local globalText = string.format("%d / %d Singularities", totalHave, totalRequired)
   if #globalText > w - 10 then
@@ -184,10 +191,13 @@ local function drawGlobalProgress(totalHave, totalRequired, y)
   gpu.setForeground(0xFFFFFF)
   gpu.setBackground(globalColor)
   gpu.fill(#globalText + 2, y, math.min(filled, w - #globalText - 2), 1, " ")
+
   gpu.setBackground(0x000000)
   gpu.fill(#globalText + 2 + filled, y, math.max(barWidth - filled, 0), 1, " ")
+
   gpu.set(1, y, globalText)
 end
+
 
 -- Main loop
 local running = true
