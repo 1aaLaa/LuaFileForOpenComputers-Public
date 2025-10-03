@@ -3,10 +3,10 @@ local event = require("event")
 local gpu = component.gpu
 local termWidth, termHeight = gpu.getResolution()
 
--- Enable on-screen debug
+-- On-screen debug
 local DEBUG = true
-local debugLines = {}  -- stores last few debug messages
-local MAX_DEBUG_LINES = 5  -- number of lines to show
+local debugLines = {}
+local MAX_DEBUG_LINES = 5
 
 -- Configurable singularities
 local singularities = {
@@ -26,14 +26,6 @@ local function formatNumber(n)
   return formatted:reverse()
 end
 
-local function getColor(percent, thresholdReached)
-  if thresholdReached or percent >= 1 then return 0x00FF00
-  elseif percent >= 0.5 then return 0xFFFF00
-  else return 0xFF0000
-  end
-end
-
--- Add a debug message to on-screen debug panel
 local function debug(msg)
   if DEBUG then
     table.insert(debugLines, msg)
@@ -43,11 +35,12 @@ local function debug(msg)
   end
 end
 
--- Detect ME components
+-- Detect only ME interfaces
 local me_list = {}
-for addr, _ in component.list("me_controller") do table.insert(me_list, component.proxy(addr)) end
-for addr, _ in component.list("me_interface") do table.insert(me_list, component.proxy(addr)) end
-if #me_list == 0 then error("No ME Interfaces or Controllers found.") end
+for addr, _ in component.list("me_interface") do
+  table.insert(me_list, component.proxy(addr))
+end
+if #me_list == 0 then error("No ME Interfaces found.") end
 
 -- Frame buffer
 local frame = {}
@@ -58,57 +51,55 @@ for _, s in ipairs(singularities) do lastAttempt[s.craft] = 0 end
 local blinkState = true
 local lastBlinkTime = os.time()
 
--- Safely get a craftable job
-local function getCraftable(name)
+-- Find all interfaces containing the pattern
+local function findPatternInterfaces(name)
+  local result = {}
   for _, me in ipairs(me_list) do
     if me.getCraftables then
       local ok, jobs = pcall(me.getCraftables, me, {name=name})
       if ok and jobs and #jobs > 0 then
-        debug("Pattern found for " .. name .. " on " .. me.address)
-        return jobs[1]
+        table.insert(result, me)
       end
     end
   end
-  debug("No pattern found for " .. name)
-  return nil
+  return result
 end
 
--- Request a craft job
+-- Request craft on the first interface with the pattern
 local function requestCraft(craftName, amount)
-  local job = getCraftable(craftName)
-  if job then
-    local ok, err = pcall(job.request, job, amount)
-    if ok then
-      debug("Craft request SUCCESS: " .. craftName)
-      return true
-    else
-      debug("Craft request FAILED: " .. craftName .. " - " .. tostring(err))
-      return false, tostring(err)
-    end
+  local interfaces = findPatternInterfaces(craftName)
+  if #interfaces == 0 then
+    debug("No pattern found for " .. craftName)
+    return false, "No pattern"
+  end
+  local me = interfaces[1]
+  local ok, err = pcall(function() me.getCraftables({name=craftName})[1].request(amount) end)
+  if ok then
+    debug("Craft request SUCCESS: " .. craftName .. " on interface " .. me.address)
+    return true
   else
-    return false, "Pattern not found for " .. craftName
+    debug("Craft request FAILED: " .. craftName .. " - " .. tostring(err))
+    return false, tostring(err)
   end
 end
 
--- Draw the frame buffer to GPU
+-- Draw frame buffer
 local function drawFrame(counts)
-  -- Update blink
   if os.time() - lastBlinkTime >= BLINK_INTERVAL then
     blinkState = not blinkState
     lastBlinkTime = os.time()
   end
 
-  -- Clear frame
   for y=1, termHeight do frame[y] = string.rep(" ", termWidth) end
 
   -- Header
   frame[1] = "=== Singularity Automation ==="
 
-  -- ME components info
+  -- ME interface info
   for i, me in ipairs(me_list) do
     local itemsCount = 0
     pcall(function() itemsCount = #me.getItemsInNetwork() end)
-    frame[1+i] = string.format("%d) [%s] %s - Items: %d", i, me.address, me.type, itemsCount)
+    frame[1+i] = string.format("%d) [%s] Items: %d", i, me.address, itemsCount)
   end
 
   local y = #me_list + 3
@@ -117,14 +108,24 @@ local function drawFrame(counts)
   for _, s in ipairs(singularities) do
     local have = counts[s.item] or 0
     local haveSingularity = counts[s.craft] or 0
-    local thresholdReached = (have >= s.threshold or haveSingularity > 0)
     local completed = haveSingularity > 0
     local isCrafting = false
 
+    -- Interfaces with pattern
+    local patternInterfaces = findPatternInterfaces(s.craft)
+    local patternStr = ""
+    if #patternInterfaces == 0 then
+      patternStr = "No pattern found"
+    else
+      local addresses = {}
+      for _, me in ipairs(patternInterfaces) do table.insert(addresses, me.address:sub(1,4)) end
+      patternStr = "Patterns on: " .. table.concat(addresses, ",")
+    end
+
     -- Attempt autocraft
-    if have >= s.threshold and not completed then
+    if have >= s.threshold and not completed and #patternInterfaces > 0 then
       if os.time() - lastAttempt[s.craft] >= RETRY_INTERVAL then
-        local success, err = requestCraft(s.craft, 1)
+        local success, _ = requestCraft(s.craft, 1)
         if success then isCrafting = true end
         lastAttempt[s.craft] = os.time()
       end
@@ -132,13 +133,13 @@ local function drawFrame(counts)
 
     if completed then totalHave = totalHave + 1 end
 
-    -- Build progress bar line
+    -- Progress bar
     local text = string.format("%-12s %s / %s", s.label, formatNumber(have), formatNumber(s.threshold))
-    local barWidth = termWidth - #text - 6
+    local barWidth = termWidth - #text - #patternStr - 6
     barWidth = math.max(barWidth, 10)
     local percent = math.min(have / s.threshold, 1)
     local filled = math.floor(percent * barWidth)
-    local line = text .. string.rep("█", filled) .. string.rep(" ", barWidth - filled)
+    local line = text .. string.rep("█", filled) .. string.rep(" ", barWidth - filled) .. " " .. patternStr
     if completed then line = line .. " ✔" end
     if isCrafting and blinkState then
       local craftText = "Crafting..."
@@ -146,18 +147,19 @@ local function drawFrame(counts)
       if start < #text+1 then start = #text+1 end
       line = line:sub(1,start-1) .. craftText .. line:sub(start + #craftText)
     end
+
     frame[y] = line
     y = y + 2
   end
 
-  -- Global progress bar
+  -- Global progress
   local globalPercent = totalHave / #singularities
   local globalText = string.format("%d / %d Singularities", totalHave, #singularities)
   local barWidth = termWidth - #globalText - 6
   local filled = math.floor(globalPercent * barWidth)
   frame[y+1] = globalText .. string.rep("█", filled) .. string.rep(" ", barWidth - filled)
 
-  -- Draw debug messages at bottom
+  -- Debug messages
   if DEBUG then
     local startDebug = termHeight - MAX_DEBUG_LINES + 1
     for i=1, MAX_DEBUG_LINES do
@@ -184,7 +186,6 @@ while running do
   end
 
   drawFrame(counts)
-
   local _, _, _, key = event.pull(0.5, "key_down")
   if key == 46 then running = false end
 end
