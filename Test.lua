@@ -49,11 +49,13 @@ end
 
 gpu.set(1,termHeight,"Press ESC to exit...")
 
--- Wait for ESC key safely
+-- Wait for ESC safely
 while true do
     local _, _, _, key = event.pull("key_down")
-    key = tonumber(key) or key
-    if key == 1 then break end  -- ESC key
+    if (type(key) == "number" and key == 1) or
+       (type(key) == "string" and key:lower() == "esc") then
+        break
+    end
 end
 
 clearScreen()
