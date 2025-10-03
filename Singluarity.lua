@@ -17,6 +17,7 @@ local singularities = {
 
 local RETRY_INTERVAL = 5
 local BLINK_INTERVAL = 0.5
+local CACHE_REFRESH = 10 -- seconds
 
 -- Helpers
 local function formatNumber(n)
@@ -35,45 +36,54 @@ local function debug(msg)
   end
 end
 
--- Detect only ME interfaces
+-- Detect ME interfaces
 local me_list = {}
 for addr, _ in component.list("me_interface") do
   table.insert(me_list, component.proxy(addr))
 end
 if #me_list == 0 then error("No ME Interfaces found.") end
 
--- Frame buffer
+-- Frame state
 local frame = {}
-for y=1, termHeight do frame[y] = string.rep(" ", termWidth) end
+local prevFrame = {}
+for y=1, termHeight do frame[y] = "" prevFrame[y] = "" end
 
 local lastAttempt = {}
 for _, s in ipairs(singularities) do lastAttempt[s.craft] = 0 end
 local blinkState = true
 local lastBlinkTime = os.time()
 
--- Find all interfaces containing the pattern
-local function findPatternInterfaces(name)
-  local result = {}
-  for _, me in ipairs(me_list) do
-    if me.getCraftables then
-      local ok, jobs = pcall(me.getCraftables, me, {name=name})
-      if ok and jobs and #jobs > 0 then
-        table.insert(result, me)
+-- Pattern cache
+local patternCache = {}
+local lastCacheUpdate = 0
+
+local function refreshPatternCache()
+  patternCache = {}
+  for _, s in ipairs(singularities) do
+    patternCache[s.craft] = {}
+    for _, me in ipairs(me_list) do
+      local ok, craftables = pcall(me.getCraftables, me)
+      if ok and craftables then
+        for _, item in ipairs(craftables) do
+          if item.name == s.craft then
+            table.insert(patternCache[s.craft], me)
+            break
+          end
+        end
       end
     end
   end
-  return result
+  lastCacheUpdate = os.time()
 end
 
--- Request craft on the first interface with the pattern
 local function requestCraft(craftName, amount)
-  local interfaces = findPatternInterfaces(craftName)
+  local interfaces = patternCache[craftName] or {}
   if #interfaces == 0 then
     debug("No pattern found for " .. craftName)
     return false, "No pattern"
   end
   local me = interfaces[1]
-  local ok, err = pcall(function() me.getCraftables({name=craftName})[1].request(amount) end)
+  local ok, err = pcall(me.request, me, craftName, amount)
   if ok then
     debug("Craft request SUCCESS: " .. craftName .. " on interface " .. me.address)
     return true
@@ -83,101 +93,107 @@ local function requestCraft(craftName, amount)
   end
 end
 
--- Draw frame buffer
-local function drawFrame(counts)
+-- Draw static parts of the UI (header + labels + patterns)
+local function drawStaticUI()
+  gpu.setBackground(0x000000)
+  gpu.setForeground(0xFFFFFF)
+  gpu.set(1,1,"=== Singularity Automation ===")
+  local y = 2
+  for i, me in ipairs(me_list) do
+    gpu.set(1,y,string.format("%d) [%s] Items:        ", i, me.address)) -- numeric placeholder
+    y = y + 1
+  end
+  y = y + 1
+  for _, s in ipairs(singularities) do
+    local patternStr = "No pattern"
+    local patternInterfaces = patternCache[s.craft] or {}
+    if #patternInterfaces > 0 then
+      local addresses = {}
+      for _, me in ipairs(patternInterfaces) do table.insert(addresses, me.address:sub(1,4)) end
+      patternStr = "Patterns on: " .. table.concat(addresses,",")
+    end
+    local line = string.format("%-12s 000,000 / %s %s", s.label, formatNumber(s.threshold), patternStr)
+    gpu.set(1,y,line)
+    y = y + 2
+  end
+  gpu.set(1,y,string.format("0 / %d Singularities", #singularities))
+end
+
+-- Update numeric values and progress bars only
+local function updateDynamicUI(counts)
   if os.time() - lastBlinkTime >= BLINK_INTERVAL then
     blinkState = not blinkState
     lastBlinkTime = os.time()
   end
 
-  for y=1, termHeight do frame[y] = string.rep(" ", termWidth) end
-
-  -- Header
-  frame[1] = "=== Singularity Automation ==="
-
-  -- ME interface info
-  for i, me in ipairs(me_list) do
+  -- Update ME interface item counts
+  local y = 2
+  for _, me in ipairs(me_list) do
     local itemsCount = 0
     pcall(function() itemsCount = #me.getItemsInNetwork() end)
-    frame[1+i] = string.format("%d) [%s] Items: %d", i, me.address, itemsCount)
+    local str = string.format("%d) [%s] Items: %d", _, me.address, itemsCount)
+    gpu.set(1,y,str)
+    y = y + 1
   end
+  y = y + 1
 
-  local y = #me_list + 3
   local totalHave = 0
-
   for _, s in ipairs(singularities) do
     local have = counts[s.item] or 0
     local haveSingularity = counts[s.craft] or 0
     local completed = haveSingularity > 0
     local isCrafting = false
 
-    -- Interfaces with pattern
-    local patternInterfaces = findPatternInterfaces(s.craft)
-    local patternStr = ""
-    if #patternInterfaces == 0 then
-      patternStr = "No pattern found"
-    else
-      local addresses = {}
-      for _, me in ipairs(patternInterfaces) do table.insert(addresses, me.address:sub(1,4)) end
-      patternStr = "Patterns on: " .. table.concat(addresses, ",")
-    end
-
-    -- Attempt autocraft
+    local patternInterfaces = patternCache[s.craft] or {}
     if have >= s.threshold and not completed and #patternInterfaces > 0 then
       if os.time() - lastAttempt[s.craft] >= RETRY_INTERVAL then
-        local success, _ = requestCraft(s.craft, 1)
+        local success,_ = requestCraft(s.craft,1)
         if success then isCrafting = true end
         lastAttempt[s.craft] = os.time()
       end
     end
-
     if completed then totalHave = totalHave + 1 end
 
-    -- Progress bar
-    local text = string.format("%-12s %s / %s", s.label, formatNumber(have), formatNumber(s.threshold))
-    local barWidth = termWidth - #text - #patternStr - 6
-    barWidth = math.max(barWidth, 10)
-    local percent = math.min(have / s.threshold, 1)
+    local text = string.format("%-12s", s.label)
+    local barWidth = termWidth - #text - 20
+    local percent = math.min(have / s.threshold,1)
     local filled = math.floor(percent * barWidth)
-    local line = text .. string.rep("█", filled) .. string.rep(" ", barWidth - filled) .. " " .. patternStr
-    if completed then line = line .. " ✔" end
-    if isCrafting and blinkState then
-      local craftText = "Crafting..."
-      local start = #text + math.floor((barWidth - #craftText)/2)
-      if start < #text+1 then start = #text+1 end
-      line = line:sub(1,start-1) .. craftText .. line:sub(start + #craftText)
-    end
+    local bar = string.rep("█",filled)..string.rep(" ",barWidth-filled)
 
-    frame[y] = line
+    local countText = string.format("%s / %s", formatNumber(have), formatNumber(s.threshold))
+    local craftText = ""
+    if isCrafting and blinkState then craftText = "Crafting..." end
+    if completed then craftText = "✔" end
+
+    gpu.set(1,y,string.format("%s %s %s %s", text, countText, bar, craftText))
     y = y + 2
   end
 
   -- Global progress
   local globalPercent = totalHave / #singularities
-  local globalText = string.format("%d / %d Singularities", totalHave, #singularities)
-  local barWidth = termWidth - #globalText - 6
-  local filled = math.floor(globalPercent * barWidth)
-  frame[y+1] = globalText .. string.rep("█", filled) .. string.rep(" ", barWidth - filled)
+  local filled = math.floor(globalPercent * (termWidth-20))
+  local bar = string.rep("█",filled)..string.rep(" ", termWidth-20-filled)
+  gpu.set(1,y,string.format("%d / %d Singularities %s", totalHave, #singularities, bar))
 
-  -- Debug messages
+  -- Debug
   if DEBUG then
     local startDebug = termHeight - MAX_DEBUG_LINES + 1
     for i=1, MAX_DEBUG_LINES do
-      frame[startDebug + i - 1] = debugLines[i] or ""
+      gpu.set(1,startDebug+i-1,debugLines[i] or string.rep(" ",termWidth))
     end
-  end
-
-  -- Render frame
-  for i=1, termHeight do
-    gpu.setBackground(0x000000)
-    gpu.setForeground(0xFFFFFF)
-    gpu.set(1, i, frame[i])
   end
 end
 
 -- Main loop
+refreshPatternCache()
+drawStaticUI()
 local running = true
 while running do
+  if os.time() - lastCacheUpdate >= CACHE_REFRESH then
+    refreshPatternCache()
+    drawStaticUI()
+  end
+
   local counts = {}
   for _, me in ipairs(me_list) do
     for _, item in ipairs(me.getItemsInNetwork()) do
@@ -185,9 +201,9 @@ while running do
     end
   end
 
-  drawFrame(counts)
-  local _, _, _, key = event.pull(0.5, "key_down")
-  if key == 46 then running = false end
+  updateDynamicUI(counts)
+  local _, _, _, key = event.pull(0.5,"key_down")
+  if key == 46 then running=false end
 end
 
 gpu.setBackground(0x000000)
