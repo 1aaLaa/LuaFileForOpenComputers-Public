@@ -2,8 +2,10 @@ local component = require("component")
 local gpu = component.gpu
 local event = require("event")
 
--- Get terminal resolution (already numbers)
-local termWidth, termHeight = gpu.getResolution()
+-- Get terminal resolution safely
+local w, h = gpu.getResolution()
+local termWidth = tonumber(w) or w
+local termHeight = tonumber(h) or h
 
 -- Helper to clear screen
 local function clearScreen()
@@ -45,4 +47,13 @@ else
     end
 end
 
-gpu.set(1,termHeight,"P
+gpu.set(1,termHeight,"Press ESC to exit...")
+
+-- Wait for ESC key to exit
+while true do
+    local _, _, _, key = event.pull("key_down")
+    if key == 1 then break end -- ESC key
+end
+
+clearScreen()
+print("Exiting ME Interface Pattern Test.")
