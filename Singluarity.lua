@@ -9,6 +9,8 @@ local singularities = {
   {item="minecraft:gold_ingot", label="Gold", threshold=10000, craft="gold_singularity"},
 }
 
+local RETRY_INTERVAL = 5  -- seconds between crafting attempts per singularity
+
 -- Format numbers with commas
 local function formatNumber(n)
   local str = tostring(n)
@@ -27,18 +29,20 @@ local function getColor(percent, thresholdReached)
   end
 end
 
--- Draw a colored progress bar
-local function drawProgress(label, current, max, width, y, thresholdReached)
+-- Draw a progress bar scaled to screen width
+local function drawProgress(label, current, max, y, thresholdReached)
+  local w, _ = gpu.getResolution()
+  local text = string.format("%-12s %s / %s", label, formatNumber(current), formatNumber(max))
+  local barWidth = w - #text - 2
+  barWidth = math.max(barWidth, 10)  -- minimum width
   local percent = math.min(current / max, 1)
-  local filled = math.floor(percent * width)
-
-  gpu.setBackground(getColor(percent, thresholdReached))
-  gpu.fill(1, y, filled, 1, " ")
-  gpu.setBackground(0x000000)
-  gpu.fill(filled+1, y, width-filled, 1, " ")
+  local filled = math.floor(percent * barWidth)
 
   gpu.setForeground(0xFFFFFF)
-  local text = string.format("%-12s %s / %s", label, formatNumber(current), formatNumber(max))
+  gpu.setBackground(getColor(percent, thresholdReached))
+  gpu.fill(#text + 2, y, filled, 1, " ")
+  gpu.setBackground(0x000000)
+  gpu.fill(#text + 2 + filled, y, barWidth - filled, 1, " ")
   gpu.set(1, y, text)
 end
 
@@ -77,11 +81,16 @@ local function getCraftable(name)
   return nil
 end
 
--- Attempt to request a crafting job
+-- Attempt to request a crafting job reliably
 local function requestCraft(craftName, amount)
   local job = getCraftable(craftName)
   if job then
-    return job.request(amount)
+    local success, err = job.request(amount)
+    if success then
+      return true
+    else
+      return false, tostring(err)
+    end
   else
     return false, "Pattern not found in ME system for " .. craftName
   end
@@ -92,6 +101,12 @@ local function clear()
   local w, h = gpu.getResolution()
   gpu.setBackground(0x000000)
   gpu.fill(1, 1, w, h, " ")
+end
+
+-- Track last attempt time per singularity
+local lastAttempt = {}
+for _, s in ipairs(singularities) do
+  lastAttempt[s.craft] = 0
 end
 
 -- Main loop
@@ -105,18 +120,23 @@ while running do
   local totalRequired = #singularities
   local totalHave = 0
   local y = 3
+  local currentTime = os.time()
 
   for _, s in ipairs(singularities) do
     local have = counts[s.item] or 0
     local haveSingularity = counts[s.craft] or 0
     local thresholdReached = (have >= s.threshold or haveSingularity > 0)
 
+    -- Attempt autocraft if enough items and cooldown passed
     if have >= s.threshold and haveSingularity == 0 then
-      local success, err = requestCraft(s.craft, 1)
-      if success then
-        gpu.set(1, y, "Crafting " .. s.label .. " Singularity...")
-      else
-        gpu.set(1, y, "Crafting failed: " .. tostring(err))
+      if currentTime - lastAttempt[s.craft] >= RETRY_INTERVAL then
+        local success, err = requestCraft(s.craft, 1)
+        if success then
+          gpu.set(1, y, "Crafting " .. s.label .. " Singularity...")
+        else
+          gpu.set(1, y, "Crafting failed: " .. tostring(err))
+        end
+        lastAttempt[s.craft] = currentTime
       end
     end
 
@@ -124,12 +144,16 @@ while running do
       totalHave = totalHave + 1
     end
 
-    drawProgress(s.label, have, s.threshold, 30, y, thresholdReached)
+    drawProgress(s.label, have, s.threshold, y, thresholdReached)
     y = y + 2
   end
 
-  -- Global progress bar
+  -- Global progress bar (also full-width)
   local globalPercent = totalHave / totalRequired
+  local w, _ = gpu.getResolution()
+  local globalText = string.format("%d / %d Singularities", totalHave, totalRequired)
+  local barWidth = w - #globalText - 2
+  local filled = math.floor(globalPercent * barWidth)
   local globalColor
   if globalPercent >= 1 then
     globalColor = 0x00FF00
@@ -139,17 +163,13 @@ while running do
     globalColor = 0xFF0000
   end
 
-  gpu.set(1, y+1, "Overall Progress:")
-  local width = 30
-  local filled = math.floor(globalPercent * width)
-  gpu.setBackground(globalColor)
-  gpu.fill(1, y+2, filled, 1, " ")
-  gpu.setBackground(0x000000)
-  gpu.fill(filled+1, y+2, width-filled, 1, " ")
-
   gpu.setForeground(0xFFFFFF)
-  gpu.set(1, y+2, string.format("%d / %d Singularities", totalHave, totalRequired))
-
+  gpu.setBackground(globalColor)
+  gpu.fill(#globalText + 2, y+2, filled, 1, " ")
+  gpu.setBackground(0x000000)
+  gpu.fill(#globalText + 2 + filled, y+2, barWidth - filled, 1, " ")
+  gpu.set(1, y+2, globalText)
+  
   -- Wait 1 second and check for C key (key code 46) to exit
   local _, _, _, key = event.pull(1, "key_down")
   if key == 46 then
