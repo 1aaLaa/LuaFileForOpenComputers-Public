@@ -2,7 +2,9 @@ local component = require("component")
 local gpu = component.gpu
 local event = require("event")
 
-local termWidth, termHeight = gpu.getResolution()
+-- Ensure width/height are numbers
+local termWidth = tonumber(gpu.getResolution())
+local termHeight = tonumber(select(2, gpu.getResolution()))
 
 -- Helper to clear screen
 local function clearScreen()
