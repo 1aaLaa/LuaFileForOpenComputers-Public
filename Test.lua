@@ -2,12 +2,12 @@ local component = require("component")
 local gpu = component.gpu
 local event = require("event")
 
--- Get terminal resolution safely
+-- Safe terminal resolution
 local w, h = gpu.getResolution()
 local termWidth = tonumber(w) or w
 local termHeight = tonumber(h) or h
 
--- Helper to clear screen
+-- Clear screen helper
 local function clearScreen()
     gpu.setBackground(0x000000)
     gpu.setForeground(0xFFFFFF)
@@ -17,7 +17,7 @@ end
 clearScreen()
 gpu.set(1,1,"=== ME Interface Pattern Test ===")
 
--- Find the first ME Interface
+-- Find ME Interface
 local interfaceAddr = next(component.list("me_interface"))
 if not interfaceAddr then
     gpu.set(1,3,"No ME Interface found. Connect one to an OC Adapter.")
@@ -27,7 +27,7 @@ end
 local me = component.proxy(interfaceAddr)
 gpu.set(1,3,"Found ME Interface: "..interfaceAddr)
 
--- Try to get craftable patterns
+-- Attempt to get craftable patterns
 local ok, craftables = pcall(me.getCraftables, me)
 if not ok then
     gpu.set(1,5,"Error: Could not call getCraftables() on this interface.")
@@ -49,10 +49,11 @@ end
 
 gpu.set(1,termHeight,"Press ESC to exit...")
 
--- Wait for ESC key to exit
+-- Wait for ESC key safely
 while true do
     local _, _, _, key = event.pull("key_down")
-    if key == 1 then break end -- ESC key
+    key = tonumber(key) or key
+    if key == 1 then break end  -- ESC key
 end
 
 clearScreen()
