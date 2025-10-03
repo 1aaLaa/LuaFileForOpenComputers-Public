@@ -12,3 +12,4 @@ for addr, typ in component.list("me_interface") do
         print("getCraftables failed")
     end
 end
+for addr, typ in component.list("me_interface") do print(addr, typ) end
