@@ -1,24 +1,33 @@
 local component = require("component")
-local term = require("term")
-local me = component.me_controller
+local event = require("event")
 local gpu = component.gpu
 
 -- Configurable singularities
 local singularities = {
   {item="minecraft:iron_ingot", label="Iron", threshold=1000000, craft="iron_singularity"},
   {item="minecraft:redstone", label="Redstone", threshold=1000000, craft="redstone_singularity"},
-  {item="minecraft:gold_ingot", label="Gold", threshold=1000000, craft="gold_singularity"},
+  {item="minecraft:gold_ingot", label="Gold", threshold=10000, craft="gold_singularity"},
 }
+
+-- Format numbers with commas
+local function formatNumber(n)
+  local str = tostring(n)
+  local formatted = str:reverse():gsub("(%d%d%d)", "%1,")
+  if formatted:sub(-1) == "," then
+    formatted = formatted:sub(1, -2)
+  end
+  return formatted:reverse()
+end
 
 -- Color helper
 local function getColor(percent, thresholdReached)
-  if thresholdReached or percent >= 1 then return 0x00FF00 -- green
-  elseif percent >= 0.5 then return 0xFFFF00 -- yellow
-  else return 0xFF0000 -- red
+  if thresholdReached or percent >= 1 then return 0x00FF00
+  elseif percent >= 0.5 then return 0xFFFF00
+  else return 0xFF0000
   end
 end
 
--- Draw a coloured progress bar
+-- Draw a colored progress bar
 local function drawProgress(label, current, max, width, y, thresholdReached)
   local percent = math.min(current / max, 1)
   local filled = math.floor(percent * width)
@@ -29,38 +38,74 @@ local function drawProgress(label, current, max, width, y, thresholdReached)
   gpu.fill(filled+1, y, width-filled, 1, " ")
 
   gpu.setForeground(0xFFFFFF)
-  local text = string.format("%-12s %d / %d", label, current, max)
+  local text = string.format("%-12s %s / %s", label, formatNumber(current), formatNumber(max))
   gpu.set(1, y, text)
 end
 
--- Attempt to request a crafting job from AE2
+-- Detect all ME components
+local me_list = {}
+for addr, _ in component.list("me_interface") do
+  table.insert(me_list, component.proxy(addr))
+end
+for addr, _ in component.list("me_controller") do
+  table.insert(me_list, component.proxy(addr))
+end
+if #me_list == 0 then
+  error("No ME Interfaces or Controllers found. Connect Adapter to AE2 network.")
+end
+
+-- Aggregate items across all ME components
+local function getAllItems()
+  local counts = {}
+  for _, me in ipairs(me_list) do
+    local items = me.getItemsInNetwork()
+    for _, item in ipairs(items) do
+      counts[item.name] = (counts[item.name] or 0) + item.size
+    end
+  end
+  return counts
+end
+
+-- Get craftable job from any ME component
+local function getCraftable(name)
+  for _, me in ipairs(me_list) do
+    local job = me.getCraftables({name=name})
+    if job and #job > 0 then
+      return job[1]
+    end
+  end
+  return nil
+end
+
+-- Attempt to request a crafting job
 local function requestCraft(craftName, amount)
-  local job = me.getCraftables({name=craftName})
-  if #job > 0 then
-    return job[1].request(amount)
+  local job = getCraftable(craftName)
+  if job then
+    return job.request(amount)
   else
     return false, "Pattern not found in ME system for " .. craftName
   end
 end
 
-local w, h = gpu.getResolution()
-
-while true do
+-- Clear screen
+local function clear()
+  local w, h = gpu.getResolution()
+  gpu.setBackground(0x000000)
   gpu.fill(1, 1, w, h, " ")
+end
+
+-- Main loop
+local running = true
+while running do
+  clear()
   gpu.setForeground(0xFFFFFF)
   gpu.set(1, 1, "=== Singularity Automation ===")
 
-  local items = me.getItemsInNetwork()
-  local counts = {}
-  for _, item in ipairs(items) do
-    counts[item.name] = item.size
-  end
-
+  local counts = getAllItems()
   local totalRequired = #singularities
   local totalHave = 0
   local y = 3
 
-  -- Individual bars
   for _, s in ipairs(singularities) do
     local have = counts[s.item] or 0
     local haveSingularity = counts[s.craft] or 0
@@ -83,7 +128,7 @@ while true do
     y = y + 2
   end
 
-  -- Global bar
+  -- Global progress bar
   local globalPercent = totalHave / totalRequired
   local globalColor
   if globalPercent >= 1 then
@@ -105,5 +150,11 @@ while true do
   gpu.setForeground(0xFFFFFF)
   gpu.set(1, y+2, string.format("%d / %d Singularities", totalHave, totalRequired))
 
-  os.sleep(10)
+  -- Wait 1 second and check for C key (key code 46) to exit
+  local _, _, _, key = event.pull(1, "key_down")
+  if key == 46 then
+    running = false
+  end
 end
+
+print("Exiting program...")
