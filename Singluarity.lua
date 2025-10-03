@@ -109,13 +109,9 @@ end
 local blinkState = true
 local lastBlinkTime = os.time()
 
--- Draw singularity progress bar
+-- Draw singularity progress bar (fully opaque)
 local function drawProgress(label, current, max, y, thresholdReached, isCrafting, completed)
   local w, _ = gpu.getResolution()
-  -- Fill entire line with black to prevent see-through
-  gpu.setBackground(0x000000)
-  gpu.fill(1, y, w, 1, " ")
-
   local text = string.format("%-12s %s / %s", label, formatNumber(current), formatNumber(max))
   if #text > w - 12 then text = text:sub(1, w - 12) .. "…" end
 
@@ -124,20 +120,23 @@ local function drawProgress(label, current, max, y, thresholdReached, isCrafting
   local percent = math.min(current / max, 1)
   local filled = math.floor(percent * barWidth)
 
-  -- Draw label
-  gpu.setForeground(0xFFFFFF)
+  -- Fill entire line with black
   gpu.setBackground(0x000000)
+  gpu.setForeground(0xFFFFFF)
+  gpu.fill(1, y, w, 1, " ")
+
+  -- Draw label
   gpu.set(1, y, text)
 
   -- Draw filled bar
   gpu.setBackground(getColor(percent, thresholdReached))
-  gpu.fill(#text + 2, y, math.min(filled, w - #text - 4), 1, " ")
+  gpu.fill(#text + 2, y, filled, 1, " ")
 
-  -- Draw empty bar part (ensures full line is black)
+  -- Draw empty bar portion
   gpu.setBackground(0x000000)
-  gpu.fill(#text + 2 + filled, y, math.max(barWidth - filled, 0), 1, " ")
+  gpu.fill(#text + 2 + filled, y, barWidth - filled, 1, " ")
 
-  -- Draw blinking "Crafting..." inside bar
+  -- Blinking "Crafting..." text inside bar
   if isCrafting then
     local currentTime = os.time()
     if currentTime - lastBlinkTime >= BLINK_INTERVAL then
@@ -150,6 +149,7 @@ local function drawProgress(label, current, max, y, thresholdReached, isCrafting
       if startPos < #text + 2 then startPos = #text + 2 end
       if startPos + #craftText - 1 > w then craftText = craftText:sub(1, w - startPos + 1) end
       gpu.setForeground(0x000000)
+      gpu.setBackground(getColor(percent, thresholdReached))
       gpu.set(startPos, y, craftText)
     end
   end
@@ -159,16 +159,18 @@ local function drawProgress(label, current, max, y, thresholdReached, isCrafting
     local checkPos = #text + barWidth + 3
     if checkPos <= w then
       gpu.setForeground(0x00FF00)
+      gpu.setBackground(0x000000)
       gpu.set(checkPos, y, "✔")
     end
   end
 end
 
--- Corrected global progress bar
+-- Draw global progress bar (fully opaque)
 local function drawGlobalProgress(totalHave, totalRequired, y)
   local w, _ = gpu.getResolution()
   gpu.setBackground(0x000000)
-  gpu.fill(1, y, w, 1, " ") -- full line background
+  gpu.setForeground(0xFFFFFF)
+  gpu.fill(1, y, w, 1, " ")
 
   local globalPercent = totalHave / totalRequired
   local globalText = string.format("%d / %d Singularities", totalHave, totalRequired)
@@ -188,16 +190,15 @@ local function drawGlobalProgress(totalHave, totalRequired, y)
     globalColor = 0xFF0000
   end
 
-  gpu.setForeground(0xFFFFFF)
   gpu.setBackground(globalColor)
-  gpu.fill(#globalText + 2, y, math.min(filled, w - #globalText - 2), 1, " ")
+  gpu.fill(#globalText + 2, y, filled, 1, " ")
 
   gpu.setBackground(0x000000)
-  gpu.fill(#globalText + 2 + filled, y, math.max(barWidth - filled, 0), 1, " ")
+  gpu.fill(#globalText + 2 + filled, y, barWidth - filled, 1, " ")
 
+  gpu.setForeground(0xFFFFFF)
   gpu.set(1, y, globalText)
 end
-
 
 -- Main loop
 local running = true
@@ -215,7 +216,7 @@ while running do
     local isCrafting = false
     local completed = haveSingularity > 0
 
-    -- Attempt autocraft if threshold reached and cooldown passed
+    -- Attempt autocraft if threshold reached and not yet completed
     if have >= s.threshold and not completed then
       if currentTime - lastAttempt[s.craft] >= RETRY_INTERVAL then
         local success, err = requestCraft(s.craft, 1)
@@ -235,7 +236,7 @@ while running do
 
   drawGlobalProgress(totalHave, totalRequired, y + 2)
 
-  -- Non-blocking sleep and exit
+  -- Non-blocking sleep and exit with C key
   local _, _, _, key = event.pull(0.5, "key_down")
   if key == 46 then running = false end
 end
