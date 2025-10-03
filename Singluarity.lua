@@ -9,7 +9,8 @@ local singularities = {
   {item="minecraft:gold_ingot", label="Gold", threshold=10000, craft="gold_singularity"},
 }
 
-local RETRY_INTERVAL = 5 -- seconds
+local RETRY_INTERVAL = 5 -- seconds between craft attempts
+local BLINK_INTERVAL = 0.5 -- blinking interval for crafting text
 
 -- Format numbers with commas
 local function formatNumber(n)
@@ -27,27 +28,6 @@ local function getColor(percent, thresholdReached)
   end
 end
 
--- Draw a progress bar (partial redraw, no full screen clear)
-local function drawProgress(label, current, max, y, thresholdReached)
-  local w, _ = gpu.getResolution()
-  local text = string.format("%-12s %s / %s", label, formatNumber(current), formatNumber(max))
-  local barWidth = w - #text - 2
-  barWidth = math.max(barWidth, 10)
-  local percent = math.min(current / max, 1)
-  local filled = math.floor(percent * barWidth)
-
-  -- Draw the label
-  gpu.setForeground(0xFFFFFF)
-  gpu.setBackground(0x000000)
-  gpu.set(1, y, text)
-
-  -- Draw the progress bar
-  gpu.setBackground(getColor(percent, thresholdReached))
-  gpu.fill(#text + 2, y, filled, 1, " ")
-  gpu.setBackground(0x000000)
-  gpu.fill(#text + 2 + filled, y, barWidth - filled, 1, " ")
-end
-
 -- Detect all ME components
 local me_list = {}
 for addr, _ in component.list("me_interface") do
@@ -56,8 +36,33 @@ end
 for addr, _ in component.list("me_controller") do
   table.insert(me_list, component.proxy(addr))
 end
+
+-- Visual confirmation of ME system
+gpu.setForeground(0xFFFFFF)
+gpu.setBackground(0x000000)
+gpu.set(1, 1, "=== Singularity Automation ===")
+
 if #me_list == 0 then
   error("No ME Interfaces or Controllers found. Connect Adapter to AE2 network.")
+else
+  gpu.setForeground(0xFFFFFF)
+  gpu.setBackground(0x000000)
+  gpu.set(1, 2, "Detected ME components:")
+  local y = 3
+  for i, me in ipairs(me_list) do
+    local addr = me.address or "Unknown"
+    local typeName = me.type or "Unknown"
+    local itemCount = 0
+    if pcall(function() itemCount = #me.getItemsInNetwork() end) then
+      itemCount = itemCount
+    end
+    local text = string.format("%d) [%s] %s - Items: %d", i, addr, typeName, itemCount)
+    local w, _ = gpu.getResolution()
+    if #text > w then text = text:sub(1, w - 1) .. "…" end
+    gpu.setForeground(0x00FFFF)
+    gpu.set(1, y, text)
+    y = y + 1
+  end
 end
 
 -- Aggregate items across all ME components
@@ -100,49 +105,73 @@ for _, s in ipairs(singularities) do
   lastAttempt[s.craft] = 0
 end
 
--- Initial header
-gpu.setForeground(0xFFFFFF)
-gpu.setBackground(0x000000)
-gpu.set(1, 1, "=== Singularity Automation ===")
+-- Progress bar state
+local blinkState = true
+local lastBlinkTime = os.time()
 
-local running = true
-while running do
-  local counts = getAllItems()
-  local totalRequired = #singularities
-  local totalHave = 0
-  local y = 3
-  local currentTime = os.time()
+-- Draw singularity progress bar
+local function drawProgress(label, current, max, y, thresholdReached, isCrafting, completed)
+  local w, _ = gpu.getResolution()
+  local text = string.format("%-12s %s / %s", label, formatNumber(current), formatNumber(max))
+  if #text > w - 12 then text = text:sub(1, w - 12) .. "…" end
 
-  for _, s in ipairs(singularities) do
-    local have = counts[s.item] or 0
-    local haveSingularity = counts[s.craft] or 0
-    local thresholdReached = (have >= s.threshold or haveSingularity > 0)
+  local barWidth = w - #text - 4
+  barWidth = math.max(barWidth, 10)
+  local percent = math.min(current / max, 1)
+  local filled = math.floor(percent * barWidth)
 
-    -- Attempt autocraft if threshold reached and cooldown passed
-    if have >= s.threshold and haveSingularity == 0 then
-      if currentTime - lastAttempt[s.craft] >= RETRY_INTERVAL then
-        local success, err = requestCraft(s.craft, 1)
-        if success then
-          gpu.set(1, y, "Crafting " .. s.label .. " Singularity...")
-        else
-          gpu.set(1, y, "Crafting failed: " .. tostring(err))
-        end
-        lastAttempt[s.craft] = currentTime
-      end
+  -- Draw label
+  gpu.setForeground(0xFFFFFF)
+  gpu.setBackground(0x000000)
+  gpu.set(1, y, text)
+
+  -- Draw filled bar
+  gpu.setBackground(getColor(percent, thresholdReached))
+  gpu.fill(#text + 2, y, math.min(filled, w - #text - 4), 1, " ")
+
+  -- Draw blinking "Crafting..." inside bar
+  if isCrafting then
+    local currentTime = os.time()
+    if currentTime - lastBlinkTime >= BLINK_INTERVAL then
+      blinkState = not blinkState
+      lastBlinkTime = currentTime
     end
-
-    if haveSingularity > 0 then totalHave = totalHave + 1 end
-
-    drawProgress(s.label, have, s.threshold, y, thresholdReached)
-    y = y + 2
+    if blinkState then
+      local craftText = "Crafting..."
+      local startPos = #text + 2 + math.floor((barWidth - #craftText) / 2)
+      if startPos < #text + 2 then startPos = #text + 2 end
+      if startPos + #craftText - 1 > w then craftText = craftText:sub(1, w - startPos + 1) end
+      gpu.setForeground(0x000000)
+      gpu.set(startPos, y, craftText)
+    end
   end
 
-  -- Global progress bar
-  local globalPercent = totalHave / totalRequired
+  -- Draw completed checkmark
+  if completed then
+    local checkPos = #text + barWidth + 3
+    if checkPos <= w then
+      gpu.setForeground(0x00FF00)
+      gpu.set(checkPos, y, "✔")
+    end
+  end
+
+  -- Draw empty part
+  gpu.setBackground(0x000000)
+  gpu.fill(#text + 2 + filled, y, math.max(barWidth - filled, 0), 1, " ")
+end
+
+-- Draw global progress bar
+local function drawGlobalProgress(totalHave, totalRequired, y)
   local w, _ = gpu.getResolution()
+  local globalPercent = totalHave / totalRequired
   local globalText = string.format("%d / %d Singularities", totalHave, totalRequired)
+  if #globalText > w - 10 then
+    globalText = globalText:sub(1, w - 10) .. "…"
+  end
+
   local barWidth = w - #globalText - 2
   local filled = math.floor(globalPercent * barWidth)
+
   local globalColor
   if globalPercent >= 1 then
     globalColor = 0x00FF00
@@ -154,13 +183,50 @@ while running do
 
   gpu.setForeground(0xFFFFFF)
   gpu.setBackground(globalColor)
-  gpu.fill(#globalText + 2, y+2, filled, 1, " ")
+  gpu.fill(#globalText + 2, y, math.min(filled, w - #globalText - 2), 1, " ")
   gpu.setBackground(0x000000)
-  gpu.fill(#globalText + 2 + filled, y+2, barWidth - filled, 1, " ")
-  gpu.set(1, y+2, globalText)
+  gpu.fill(#globalText + 2 + filled, y, math.max(barWidth - filled, 0), 1, " ")
+  gpu.set(1, y, globalText)
+end
 
-  -- Non-blocking sleep and key check
-  local _, _, _, key = event.pull(1, "key_down")
+-- Main loop
+local running = true
+while running do
+  local counts = getAllItems()
+  local totalRequired = #singularities
+  local totalHave = 0
+  local y = #me_list + 5
+  local currentTime = os.time()
+
+  for _, s in ipairs(singularities) do
+    local have = counts[s.item] or 0
+    local haveSingularity = counts[s.craft] or 0
+    local thresholdReached = (have >= s.threshold or haveSingularity > 0)
+    local isCrafting = false
+    local completed = haveSingularity > 0
+
+    -- Attempt autocraft if threshold reached and cooldown passed
+    if have >= s.threshold and not completed then
+      if currentTime - lastAttempt[s.craft] >= RETRY_INTERVAL then
+        local success, err = requestCraft(s.craft, 1)
+        if success then
+          isCrafting = true
+        else
+          gpu.set(1, y, "Crafting failed: " .. tostring(err))
+        end
+        lastAttempt[s.craft] = currentTime
+      end
+    end
+
+    if completed then totalHave = totalHave + 1 end
+    drawProgress(s.label, have, s.threshold, y, thresholdReached, isCrafting, completed)
+    y = y + 2
+  end
+
+  drawGlobalProgress(totalHave, totalRequired, y + 2)
+
+  -- Non-blocking sleep and exit
+  local _, _, _, key = event.pull(0.5, "key_down")
   if key == 46 then running = false end
 end
 
