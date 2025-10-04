@@ -1,78 +1,91 @@
 local component = require("component")
 local event = require("event")
 
--- Use Inventory Controller (or Transposer)
-local ic = component.inventory_controller -- if using Transposer, swap accordingly
+-- Bind Inventory Controller or Transposer
+local icAddress = component.list("inventory_controller")()
+if not icAddress then error("No inventory_controller found!") end
+local ic = component.proxy(icAddress)
 
--- Manually define sides
-local sides = {up=0, down=1, north=2, south=3, west=4, east=5}
+-- CONFIG: Adjust as needed
+local BUFFER_CHEST = "Buffer Chest"        -- Name label of buffer chest
+local COMPRESSOR = "Quantum Compressor"   -- Name label of the machine
+local OUTPUT_CHEST = "Output Chest"       -- Name label of output chest
+local MACHINE_DELAY = 5                   -- Seconds to wait for processing
 
--- CONFIG: adjust to your setup
-local bufferChest = sides.front
-local compressor = sides.back
-local outputChest = sides.east
+-- Items we need for crafting
+local REQUIRED_ITEMS = {
+  {name="Crystalline Catalyst", count=1},
+  {name="Gold", count=10000}
+}
 
--- Utility: Print inventory for debugging
-local function printInventory(side, label)
-  local size = ic.getInventorySize(side)
-  print("Inventory of "..label..":")
-  for slot=1,size do
-    local stack = ic.getStackInSlot(side, slot)
-    if stack then
-      print(" Slot "..slot..": "..stack.label.." x"..stack.size)
+-- Utility: find item in an inventory by label
+local function findItem(inventoryLabel, itemName)
+  local stacks = ic.getInventoryStacks()
+  for slot, stack in pairs(stacks) do
+    if stack.label == itemName then
+      return slot, stack.size
     end
+  end
+  return nil, 0
+end
+
+-- Utility: scan for inventory by label
+local function findInventoryByLabel(label)
+  local inventories = ic.getInventories()
+  for _, inv in pairs(inventories) do
+    local name = ic.getInventoryName(inv)
+    if name == label then
+      return inv
+    end
+  end
+  return nil
+end
+
+-- Insert ingredients dynamically
+local function insertIngredients()
+  print("Scanning buffer chest for ingredients...")
+  local bufferInv = findInventoryByLabel(BUFFER_CHEST)
+  local machineInv = findInventoryByLabel(COMPRESSOR)
+  if not bufferInv or not machineInv then
+    error("Cannot find buffer chest or compressor")
+  end
+
+  for _, item in ipairs(REQUIRED_ITEMS) do
+    local slot, available = findItem(bufferInv, item.name)
+    if not slot or available < item.count then
+      error("Not enough "..item.name.." in buffer chest")
+    end
+    print("Moving "..item.count.." "..item.name.." to compressor")
+    local moved = ic.suckFromSlot(bufferInv, slot, item.count)
+    ic.dropIntoSlot(machineInv, 1, moved)
   end
 end
 
--- Function to pull ingredients from buffer chest into machine
-local function insertIngredients(ingredients)
-  for _, ing in ipairs(ingredients) do
-    local name, count, chestSlot = ing[1], ing[2], ing[3]
-    local moved = ic.suckFromSlot(bufferChest, chestSlot, count)
-    if moved < count then
-      print("Warning: Could not move full quantity of "..name)
-    end
-    ic.dropIntoSlot(compressor, 1, moved) -- assuming compressor input is slot 1
-  end
-end
-
--- Function to collect output
+-- Collect output
 local function collectOutput()
-  local size = ic.getInventorySize(compressor)
-  for slot=1,size do
-    local stack = ic.getStackInSlot(compressor, slot)
-    if stack then
-      ic.suckFromSlot(compressor, slot, stack.size)
-      ic.dropIntoSlot(outputChest, 1, stack.size)
-      print("Collected "..stack.label.." x"..stack.size)
+  print("Collecting output...")
+  local machineInv = findInventoryByLabel(COMPRESSOR)
+  local outputInv = findInventoryByLabel(OUTPUT_CHEST)
+  if not machineInv or not outputInv then error("Cannot find compressor or output chest") end
+
+  local stacks = ic.getInventoryStacks(machineInv)
+  for slot, stack in pairs(stacks) do
+    if stack.label ~= "Crystalline Catalyst" and stack.label ~= "Gold" then
+      print("Moving "..stack.label.." x"..stack.size.." to output chest")
+      ic.suckFromSlot(machineInv, slot, stack.size)
+      ic.dropIntoSlot(outputInv, 1, stack.size)
     end
   end
 end
 
--- Main routine: craft gold singularity
+-- Main crafting function
 local function craftGoldSingularity()
-  print("Starting Gold Singularity craft")
-
-  printInventory(bufferChest, "Buffer Chest before")
-  printInventory(compressor, "Quantum Compressor before")
-
-  -- Ingredients: {itemName, count, chestSlot}
-  local ingredients = {
-    {"modpack:crystalline_catalyst", 1, 1}, -- slot 1 in buffer chest
-    {"minecraft:gold_ingot", 10000, 2}      -- slot 2 in buffer chest
-  }
-
-  insertIngredients(ingredients)
-  printInventory(compressor, "Quantum Compressor after inserting ingredients")
-
-  -- Wait for machine to finish (quantum compressor may need time)
-  print("Waiting for machine...")
-  os.sleep(5) -- adjust depending on machine processing time
-
+  print("=== Crafting Gold Singularity ===")
+  insertIngredients()
+  print("Waiting "..MACHINE_DELAY.." seconds for machine to process...")
+  os.sleep(MACHINE_DELAY)
   collectOutput()
-  printInventory(outputChest, "Output Chest after craft")
-
-  print("Gold Singularity crafting complete!")
+  print("=== Crafting complete! ===")
 end
 
 -- Execute
