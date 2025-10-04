@@ -1,15 +1,14 @@
-local comp = require("component")
-local sides = require("sides")
-local t = comp.transposer
+local component = require("component")
+local sides = require("sides")      -- <-- Required
+local transposer = component.transposer
 
--- Replace this with the side your Interface is on
-local ifaceSide = sides.back
+local ifaceSide = sides.back         -- Adjust this to the side your interface is on
 
-print("Inventory name:", t.getInventoryName(ifaceSide))
-print("Slot count:", t.getInventorySize(ifaceSide))
+print("Inventory name:", transposer.getInventoryName(ifaceSide))
+print("Slot count:", transposer.getInventorySize(ifaceSide))
 
-for i = 1, t.getInventorySize(ifaceSide) do
-  local stack = t.getStackInSlot(ifaceSide, i)
+for i = 1, transposer.getInventorySize(ifaceSide) do
+  local stack = transposer.getStackInSlot(ifaceSide, i)
   if stack then
     print(i, stack.label, stack.name)
   end
