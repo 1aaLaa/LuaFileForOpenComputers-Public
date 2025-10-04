@@ -28,15 +28,19 @@ local function detectTransposers()
   local transposers = {}
 
   for addr in component.list("transposer") do
-    local tp = component.proxy(addr)
-    local connections = {}
-    for s = 0, 5 do
-      local name = tp.getInventoryName(s)
-      if name then
-        connections[#connections + 1] = {side = s, name = name:lower()}
+    local success, tp = pcall(component.proxy, addr)
+    if success and tp then
+      local connections = {}
+      for s = 0, 5 do
+        local success2, name = pcall(tp.getInventoryName, s)
+        if success2 and name then
+          connections[#connections + 1] = {side = s, name = tostring(name):lower()}
+        end
       end
+      transposers[#transposers + 1] = {tp = tp, addr = addr, connections = connections}
+    else
+      print("Warning: Could not proxy transposer " .. addr:sub(1, 8))
     end
-    transposers[#transposers + 1] = {tp = tp, addr = addr, connections = connections}
   end
 
   print("\n=== Transposer Detection ===")
@@ -48,6 +52,10 @@ local function detectTransposers()
   end
   print("============================\n")
 
+  print("Please label your inventories based on what was detected above.")
+  print("Or press Enter to continue with manual configuration...")
+  io.read()
+
   -- classify each transposer by its connections
   local classified = {}
 
@@ -56,19 +64,34 @@ local function detectTransposers()
 
     for _, c in ipairs(entry.connections) do
       local n = c.name
+      print(string.format("[DEBUG] Checking '%s'", n))
+      
       if n:find("appliedenergistics2") or n:find("interface") then 
-        ae2 = c.side 
+        ae2 = c.side
+        print("  -> Matched as AE2/Interface")
       end
-      if n:find("buffer") or (n:find("chest") and not buffer) then 
-        buffer = c.side 
+      if n:find("buffer") or n:find("chest") then 
+        if not buffer then
+          buffer = c.side
+          print("  -> Matched as Buffer/Chest")
+        end
       end
       if n:find("compressor") then 
-        compressor = c.side 
+        compressor = c.side
+        print("  -> Matched as Compressor")
       end
       if n:find("output") then 
-        output = c.side 
+        output = c.side
+        print("  -> Matched as Output")
       end
     end
+
+    print(string.format("\n[TRANSPOSER %s] ae2=%s buffer=%s compressor=%s output=%s\n", 
+      entry.addr:sub(1, 8), 
+      tostring(ae2), 
+      tostring(buffer), 
+      tostring(compressor), 
+      tostring(output)))
 
     if ae2 and buffer then
       table.insert(classified, {role = "ae2_to_buffer", tp = entry.tp, from = ae2, to = buffer})
@@ -84,12 +107,12 @@ local function detectTransposers()
     end
     
     if not (ae2 or buffer or compressor or output) then
-      print("→ Unassigned Transposer (" .. entry.addr:sub(1, 8) .. ")")
+      print("→ Unassigned Transposer - no matching inventory names (" .. entry.addr:sub(1, 8) .. ")")
     end
   end
 
   if #classified == 0 then
-    error("No valid transposers detected!")
+    error("No valid transposers detected! Check the inventory names above and make sure they contain keywords like 'interface', 'chest'/'buffer', 'compressor', or 'output'")
   end
 
   print("\nDetection complete.\n")
