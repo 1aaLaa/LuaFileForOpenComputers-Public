@@ -1,92 +1,99 @@
 local component = require("component")
+local sides = require("sides")
 local event = require("event")
 
--- Bind Inventory Controller or Transposer
-local icAddress = component.list("inventory_controller")()
-if not icAddress then error("No inventory_controller found!") end
-local ic = component.proxy(icAddress)
+-- Transposer component addresses
+local t1 = component.proxy("xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx") -- AE2 -> Buffer
+local t2 = component.proxy("xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx") -- Buffer -> Compressor
+local t3 = component.proxy("xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx") -- Compressor -> Output
 
--- CONFIG: Adjust as needed
-local BUFFER_CHEST = "Buffer Chest"        -- Name label of buffer chest
-local COMPRESSOR = "Quantum Compressor"   -- Name label of the machine
-local OUTPUT_CHEST = "Output Chest"       -- Name label of output chest
-local MACHINE_DELAY = 5                   -- Seconds to wait for processing
+-- CONFIGURATION
+local MACHINE_DELAY = 5 -- seconds to wait for compressor to finish
 
--- Items we need for crafting
-local REQUIRED_ITEMS = {
-  {name="Crystalline Catalyst", count=1},
-  {name="Gold", count=10000}
+-- Define all singularity recipes
+local SINGULARITY_RECIPES = {
+    ["Gold"]    = {{"Crystalline Catalyst", 1}, {"Gold", 10000}},
+    ["Iron"]    = {{"Crystalline Catalyst", 1}, {"Iron Ingot", 10000}},
+    ["Diamond"] = {{"Crystalline Catalyst", 1}, {"Diamond", 10000}},
+    -- add more here
 }
 
--- Utility: find item in an inventory by label
-local function findItem(inventoryLabel, itemName)
-  local stacks = ic.getInventoryStacks()
-  for slot, stack in pairs(stacks) do
-    if stack.label == itemName then
-      return slot, stack.size
+-- Side configuration for each transposer
+-- Adjust these to match your build physically.
+local ME_SIDE        = sides.down    -- ME Interface touching transposer 1 bottom
+local BUFFER_SIDE_T1 = sides.north   -- Buffer chest facing transposer 1 front
+
+local BUFFER_SIDE_T2 = sides.south   -- Buffer chest facing transposer 2 back
+local COMP_SIDE_T2   = sides.north   -- Quantum Compressor facing transposer 2 front
+
+local COMP_SIDE_T3   = sides.south   -- Quantum Compressor facing transposer 3 back
+local OUTPUT_SIDE_T3 = sides.north   -- Output chest facing transposer 3 front
+
+-------------------------------------------------------------------
+-- FUNCTIONS
+-------------------------------------------------------------------
+
+local function moveItems(trans, fromSide, toSide, filterName, maxAmount)
+    -- find the item in the 'fromSide' inventory by label and move it
+    local stacks = trans.getAllStacks(fromSide).getAll()
+    for slot, stack in pairs(stacks) do
+        if stack.label == filterName then
+            local moved = trans.transferItem(fromSide, toSide, math.min(stack.size, maxAmount), slot)
+            print(string.format("Moved %d of %s", moved or 0, stack.label))
+            maxAmount = maxAmount - moved
+            if maxAmount <= 0 then break end
+        end
     end
-  end
-  return nil, 0
 end
 
--- Utility: scan for inventory by label
-local function findInventoryByLabel(label)
-  local inventories = ic.getInventories()
-  for _, inv in pairs(inventories) do
-    local name = ic.getInventoryName(inv)
-    if name == label then
-      return inv
+-- Request items from AE2 into buffer chest (via ME Interface)
+local function requestItems(recipe)
+    print("Requesting items from ME Interface...")
+    for _, item in ipairs(recipe) do
+        -- Use transposer to pull directly from ME Interface’s internal inventory
+        -- Items should be exported by ME Interface (set in export mode or pattern interface mode)
+        local moved = t1.transferItem(ME_SIDE, BUFFER_SIDE_T1, item[2])
+        print(string.format("Pulled %d of %s from AE2 Interface -> Buffer Chest", moved or 0, item[1]))
     end
-  end
-  return nil
 end
 
--- Insert ingredients dynamically
-local function insertIngredients()
-  print("Scanning buffer chest for ingredients...")
-  local bufferInv = findInventoryByLabel(BUFFER_CHEST)
-  local machineInv = findInventoryByLabel(COMPRESSOR)
-  if not bufferInv or not machineInv then
-    error("Cannot find buffer chest or compressor")
-  end
-
-  for _, item in ipairs(REQUIRED_ITEMS) do
-    local slot, available = findItem(bufferInv, item.name)
-    if not slot or available < item.count then
-      error("Not enough "..item.name.." in buffer chest")
+-- Move ingredients from Buffer -> Quantum Compressor
+local function feedMachine(recipe)
+    print("Feeding Quantum Compressor...")
+    for _, item in ipairs(recipe) do
+        moveItems(t2, BUFFER_SIDE_T2, COMP_SIDE_T2, item[1], item[2])
     end
-    print("Moving "..item.count.." "..item.name.." to compressor")
-    local moved = ic.suckFromSlot(bufferInv, slot, item.count)
-    ic.dropIntoSlot(machineInv, 1, moved)
-  end
 end
 
--- Collect output
+-- Collect output from Compressor -> Output Chest
 local function collectOutput()
-  print("Collecting output...")
-  local machineInv = findInventoryByLabel(COMPRESSOR)
-  local outputInv = findInventoryByLabel(OUTPUT_CHEST)
-  if not machineInv or not outputInv then error("Cannot find compressor or output chest") end
-
-  local stacks = ic.getInventoryStacks(machineInv)
-  for slot, stack in pairs(stacks) do
-    if stack.label ~= "Crystalline Catalyst" and stack.label ~= "Gold" then
-      print("Moving "..stack.label.." x"..stack.size.." to output chest")
-      ic.suckFromSlot(machineInv, slot, stack.size)
-      ic.dropIntoSlot(outputInv, 1, stack.size)
+    print("Collecting output from Quantum Compressor...")
+    local stacks = t3.getAllStacks(COMP_SIDE_T3).getAll()
+    for slot, stack in pairs(stacks) do
+        if stack.name ~= nil and stack.label ~= "Crystalline Catalyst" then
+            local moved = t3.transferItem(COMP_SIDE_T3, OUTPUT_SIDE_T3, stack.size, slot)
+            print(string.format("Collected %d of %s -> Output Chest", moved or 0, stack.label))
+        end
     end
-  end
 end
 
--- Main crafting function
-local function craftGoldSingularity()
-  print("=== Crafting Gold Singularity ===")
-  insertIngredients()
-  print("Waiting "..MACHINE_DELAY.." seconds for machine to process...")
-  os.sleep(MACHINE_DELAY)
-  collectOutput()
-  print("=== Crafting complete! ===")
+-- Craft a singularity
+local function craftSingularity(name)
+    local recipe = SINGULARITY_RECIPES[name]
+    if not recipe then error("Recipe for "..name.." not found!") end
+
+    print("\n=== Crafting "..name.." Singularity ===")
+    requestItems(recipe)
+    feedMachine(recipe)
+    print("Waiting "..MACHINE_DELAY.." seconds for compressor...")
+    os.sleep(MACHINE_DELAY)
+    collectOutput()
+    print("=== "..name.." Singularity Complete ===\n")
 end
 
--- Execute
-craftGoldSingularity()
+-------------------------------------------------------------------
+-- Example usage
+-------------------------------------------------------------------
+-- craftSingularity("Gold")
+-- craftSingularity("Iron")
+-- craftSingularity("Diamond")
