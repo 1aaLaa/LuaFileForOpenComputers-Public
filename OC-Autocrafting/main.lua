@@ -330,14 +330,13 @@ function runShell(network)
   print("\n=== Simple Command Shell ===")
   print("Type 'help' for commands, 'exit' to quit")
   
+  local gpu = component.gpu
+  
   while true do
-    print("\n> ")
+    gpu.set(1, gpu.getResolution(), "> ")
     local input = ""
     
     -- Simple character-by-character input
-    local gpu = component.gpu
-    local x, y = gpu.get()
-    
     while true do
       local _, _, char, code = event.pull("key_down")
       
@@ -347,14 +346,15 @@ function runShell(network)
       elseif code == 14 then -- Backspace
         if #input > 0 then
           input = input:sub(1, -2)
-          x = x - 1
-          gpu.set(x, y, " ")
-          gpu.set(x, y, "")
+          -- Redraw the line
+          local w, h = gpu.getResolution()
+          gpu.fill(1, h, w, 1, " ")
+          gpu.set(1, h, "> " .. input)
         end
-      elseif char > 0 then
-        input = input .. string.char(char)
-        gpu.set(x, y, string.char(char))
-        x = x + 1
+      elseif char > 0 and char < 256 then
+        local c = string.char(char)
+        input = input .. c
+        gpu.set(3 + #input - 1, gpu.getResolution(), c)
       end
     end
     
