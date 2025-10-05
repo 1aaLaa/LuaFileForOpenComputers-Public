@@ -66,62 +66,99 @@ local function detectTransposers()
   end
   print("============================\n")
 
-  print("Please label your inventories based on what was detected above.")
-  print("Or press Enter to continue with manual configuration...")
-  io.read()
-
-  -- classify each transposer by its connections
-  local classified = {}
+  -- Build inventory map across ALL transposers
+  local inventory_map = {
+    ae2 = {},
+    buffer = {},
+    compressor = {},
+    output = {}
+  }
 
   for _, entry in ipairs(transposers) do
-    local ae2, buffer, compressor, output
-
     for _, c in ipairs(entry.connections) do
       local n = c.name
-      print(string.format("[DEBUG] Checking '%s'", n))
+      print(string.format("[DEBUG] Checking '%s' on transposer %s side %d", n, entry.addr:sub(1, 8), c.side))
       
       if n:find("appliedenergistics2") or n:find("interface") then 
-        ae2 = c.side
+        table.insert(inventory_map.ae2, {tp = entry.tp, side = c.side, addr = entry.addr})
         print("  -> Matched as AE2/Interface")
-      end
-      if n:find("buffer") or n:find("chest") then 
-        if not buffer then
-          buffer = c.side
-          print("  -> Matched as Buffer/Chest")
-        end
-      end
-      if n:find("compressor") then 
-        compressor = c.side
+      elseif n:find("buffer") or n:find("chest") then 
+        table.insert(inventory_map.buffer, {tp = entry.tp, side = c.side, addr = entry.addr})
+        print("  -> Matched as Buffer/Chest")
+      elseif n:find("compressor") then 
+        table.insert(inventory_map.compressor, {tp = entry.tp, side = c.side, addr = entry.addr})
         print("  -> Matched as Compressor")
-      end
-      if n:find("output") then 
-        output = c.side
+      elseif n:find("output") then 
+        table.insert(inventory_map.output, {tp = entry.tp, side = c.side, addr = entry.addr})
         print("  -> Matched as Output")
       end
     end
+  end
 
-    print(string.format("\n[TRANSPOSER %s] ae2=%s buffer=%s compressor=%s output=%s\n", 
-      entry.addr:sub(1, 8), 
-      tostring(ae2), 
-      tostring(buffer), 
-      tostring(compressor), 
-      tostring(output)))
-
-    if ae2 and buffer then
-      table.insert(classified, {role = "ae2_to_buffer", tp = entry.tp, from = ae2, to = buffer})
-      print("→ Role: AE2 → Buffer (" .. entry.addr:sub(1, 8) .. ")")
-    end
-    if buffer and compressor then
-      table.insert(classified, {role = "buffer_to_compressor", tp = entry.tp, from = buffer, to = compressor})
-      print("→ Role: Buffer → Compressor (" .. entry.addr:sub(1, 8) .. ")")
-    end
-    if compressor and output then
-      table.insert(classified, {role = "compressor_to_output", tp = entry.tp, from = compressor, to = output})
-      print("→ Role: Compressor → Output (" .. entry.addr:sub(1, 8) .. ")")
+  -- Now create classified transposer pairs
+  local classified = {}
+  
+  -- Find AE2 -> Buffer pairs (same transposer with both)
+  for _, entry in ipairs(transposers) do
+    local ae2_side, buffer_side, compressor_side, output_side
+    
+    for _, c in ipairs(entry.connections) do
+      local n = c.name
+      if n:find("appliedenergistics2") or n:find("interface") then
+        ae2_side = c.side
+      elseif n:find("buffer") or n:find("chest") then
+        buffer_side = c.side
+      elseif n:find("compressor") then
+        compressor_side = c.side
+      elseif n:find("output") then
+        output_side = c.side
+      end
     end
     
-    if not (ae2 or buffer or compressor or output) then
-      print("→ Unassigned Transposer - no matching inventory names (" .. entry.addr:sub(1, 8) .. ")")
+    -- Check all possible connections for this transposer
+    if ae2_side then
+      -- This transposer has AE2, look for buffer on any other transposer
+      for _, buf in ipairs(inventory_map.buffer) do
+        table.insert(classified, {
+          role = "ae2_to_buffer", 
+          tp = entry.tp, 
+          from = ae2_side, 
+          to_tp = buf.tp,
+          to = buf.side
+        })
+        print(string.format("→ Role: AE2 (side %d) → Buffer (side %d on %s)", ae2_side, buf.side, buf.addr:sub(1,8)))
+        break -- Only need one buffer connection
+      end
+    end
+    
+    if buffer_side then
+      -- This transposer has buffer, look for compressor
+      for _, comp in ipairs(inventory_map.compressor) do
+        table.insert(classified, {
+          role = "buffer_to_compressor",
+          tp = entry.tp,
+          from = buffer_side,
+          to_tp = comp.tp,
+          to = comp.side
+        })
+        print(string.format("→ Role: Buffer (side %d) → Compressor (side %d on %s)", buffer_side, comp.side, comp.addr:sub(1,8)))
+        break
+      end
+    end
+    
+    if compressor_side then
+      -- This transposer has compressor, look for output
+      for _, out in ipairs(inventory_map.output) do
+        table.insert(classified, {
+          role = "compressor_to_output",
+          tp = entry.tp,
+          from = compressor_side,
+          to_tp = out.tp,
+          to = out.side
+        })
+        print(string.format("→ Role: Compressor (side %d) → Output (side %d on %s)", compressor_side, out.side, out.addr:sub(1,8)))
+        break
+      end
     end
   end
 
@@ -137,7 +174,7 @@ end
 -- Utility functions
 -------------------------------------------------------------------
 
-local function moveItems(tp, fromSide, toSide, filterName, maxAmount)
+local function moveItems(tp, fromSide, target_tp, toSide, filterName, maxAmount)
   local moved_total = 0
   local size = tp.getInventorySize(fromSide)
   
@@ -176,7 +213,8 @@ local function moveByRole(network, role, itemName, amount)
   local total_moved = 0
   for _, t in ipairs(network) do
     if t.role == role then
-      total_moved = total_moved + moveItems(t.tp, t.from, t.to, itemName, amount - total_moved)
+      local target_tp = t.to_tp or t.tp
+      total_moved = total_moved + moveItems(t.tp, t.from, target_tp, t.to, itemName, amount - total_moved)
       if total_moved >= amount then break end
     end
   end
