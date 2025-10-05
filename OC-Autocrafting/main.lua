@@ -304,50 +304,22 @@ local function craftSingularity(network, name)
 end
 
 -------------------------------------------------------------------
--- Menu System
+-- Helper Functions
 -------------------------------------------------------------------
 
-local function showMenu(network)
-  while true do
-    print("\n=== Singularity Crafter Menu ===")
-    print("1. Craft Gold Singularity")
-    print("2. Craft Iron Singularity")
-    print("3. Craft Diamond Singularity")
-    print("4. Test item movement (debug)")
-    print("5. Show detected setup")
-    print("6. Exit")
-    print("================================")
-    print("Select option (1-6): ")
-    
-    local choice = read()
-    if choice then
-      choice = choice:gsub("%s+", "") -- Remove whitespace
-    end
-    
-    if choice == "1" then
-      craftSingularity(network, "Gold")
-    elseif choice == "2" then
-      craftSingularity(network, "Iron")
-    elseif choice == "3" then
-      craftSingularity(network, "Diamond")
-    elseif choice == "4" then
-      print("\nTesting item movement...")
-      print("This will attempt to move 1 Crystalline Catalyst from AE2 to buffer")
-      moveByRole(network, "ae2_to_buffer", "Crystalline Catalyst", 1)
-    elseif choice == "5" then
-      print("\n=== Current Setup ===")
-      for i, t in ipairs(network) do
-        print(string.format("%d. Role: %s", i, t.role))
-        print(string.format("   From: side %d, To: side %d", t.from, t.to))
-      end
-      print("====================")
-    elseif choice == "6" then
-      print("Exiting...")
-      break
-    else
-      print("Invalid choice. Please enter 1-6.")
-    end
+local function testMovement(network)
+  print("\nTesting item movement...")
+  print("This will attempt to move 1 Crystalline Catalyst from AE2 to buffer")
+  moveByRole(network, "ae2_to_buffer", "Crystalline Catalyst", 1)
+end
+
+local function showSetup(network)
+  print("\n=== Current Setup ===")
+  for i, t in ipairs(network) do
+    print(string.format("%d. Role: %s", i, t.role))
+    print(string.format("   From: side %d, To: side %d", t.from, t.to))
   end
+  print("====================")
 end
 
 -------------------------------------------------------------------
@@ -357,5 +329,15 @@ end
 print("Initializing Singularity Crafter...")
 local network = detectTransposers()
 
-print("\nReady! Starting menu...\n")
-showMenu(network)
+print("\n=== Singularity Crafter Ready ===")
+print("\nAvailable commands:")
+print("  showSetup(network)           - Show detected transposer setup")
+print("  testMovement(network)        - Test moving 1 item")
+print("  craftSingularity(network, \"Gold\")    - Craft Gold Singularity")
+print("  craftSingularity(network, \"Iron\")    - Craft Iron Singularity")
+print("  craftSingularity(network, \"Diamond\") - Craft Diamond Singularity")
+print("\nExample: craftSingularity(network, \"Gold\")")
+print("===================================\n")
+
+-- Return network so it's available in the shell
+return network
