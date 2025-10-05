@@ -1,4 +1,5 @@
 local component = require("component")
+local event = require("event")
 
 -- === Local enum for sides (MineOS compatible) ===
 local sides = {
@@ -328,37 +329,39 @@ end
 
 function runShell(network)
   print("\n=== Simple Command Shell ===")
-  print("Type 'help' for commands, 'exit' to quit")
-  
-  local gpu = component.gpu
+  print("Commands: setup, test, gold, iron, diamond, help, exit")
+  print("Note: Just type the command and press Enter")
   
   while true do
-    gpu.set(1, gpu.getResolution(), "> ")
-    local input = ""
+    print("\n> Enter command:")
     
-    -- Simple character-by-character input
-    while true do
-      local _, _, char, code = event.pull("key_down")
-      
-      if code == 28 then -- Enter key
-        print("")
-        break
-      elseif code == 14 then -- Backspace
-        if #input > 0 then
-          input = input:sub(1, -2)
-          -- Redraw the line
-          local w, h = gpu.getResolution()
-          gpu.fill(1, h, w, 1, " ")
-          gpu.set(1, h, "> " .. input)
-        end
-      elseif char > 0 and char < 256 then
-        local c = string.char(char)
-        input = input .. c
-        gpu.set(3 + #input - 1, gpu.getResolution(), c)
+    -- Use os.execute to get input in a simpler way
+    local input = ""
+    local success, result = pcall(function()
+      -- Try different input methods
+      if io and io.read then
+        return io.read()
+      else
+        -- Fallback: just print instructions
+        print("Input not available - calling functions directly instead")
+        print("Available global functions:")
+        print("  showSetup(network)")
+        print("  testMovement(network)")
+        print("  craftSingularity(network, 'Gold')")
+        print("  craftSingularity(network, 'Iron')")
+        print("  craftSingularity(network, 'Diamond')")
+        return nil
       end
+    end)
+    
+    if not success or not result then
+      -- Input failed, just break and let user call functions directly
+      print("\nShell input unavailable. Use functions directly from Lua prompt:")
+      print("Example: craftSingularity(network, 'Gold')")
+      break
     end
     
-    input = input:gsub("^%s*(.-)%s*$", "%1") -- Trim whitespace
+    input = result:gsub("^%s*(.-)%s*$", "%1") -- Trim whitespace
     
     if input == "exit" or input == "quit" then
       print("Exiting...")
