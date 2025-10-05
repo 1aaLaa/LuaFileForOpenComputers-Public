@@ -175,6 +175,9 @@ end
 -------------------------------------------------------------------
 
 local function moveItems(tp, fromSide, target_tp, toSide, filterName, maxAmount)
+  print(string.format("[DEBUG] moveItems called: filter='%s', amount=%d", filterName, maxAmount))
+  print(string.format("[DEBUG] From side %d to side %d", fromSide, toSide))
+  
   local moved_total = 0
   local size = tp.getInventorySize(fromSide)
   
@@ -183,23 +186,35 @@ local function moveItems(tp, fromSide, target_tp, toSide, filterName, maxAmount)
     return 0
   end
   
+  print(string.format("[DEBUG] Source inventory has %d slots", size))
+  
   for slot = 1, size do
     if maxAmount <= 0 then break end
     
     local stack = tp.getStackInSlot(fromSide, slot)
-    if stack and stack.label == filterName then
-      local toMove = math.min(stack.size, maxAmount)
-      local moved = tp.transferItem(fromSide, toSide, toMove, slot)
-      if moved and moved > 0 then
-        print(string.format("Moved %d of %s from slot %d", moved, stack.label, slot))
-        moved_total = moved_total + moved
-        maxAmount = maxAmount - moved
+    if stack then
+      print(string.format("[DEBUG] Slot %d: %s x%d", slot, stack.label or "unknown", stack.size or 0))
+      
+      if stack.label == filterName then
+        local toMove = math.min(stack.size, maxAmount)
+        print(string.format("[DEBUG] Attempting to move %d items from slot %d", toMove, slot))
+        
+        local moved = tp.transferItem(fromSide, toSide, toMove, slot)
+        if moved and moved > 0 then
+          print(string.format("✓ Moved %d of %s from slot %d", moved, stack.label, slot))
+          moved_total = moved_total + moved
+          maxAmount = maxAmount - moved
+        else
+          print(string.format("✗ Failed to move items from slot %d", slot))
+        end
       end
     end
   end
   
   if moved_total == 0 then
     print("Warning: Could not find/move " .. filterName)
+  else
+    print(string.format("[DEBUG] Total moved: %d", moved_total))
   end
   
   return moved_total
@@ -289,20 +304,55 @@ local function craftSingularity(network, name)
 end
 
 -------------------------------------------------------------------
+-- Menu System
+-------------------------------------------------------------------
+
+local function showMenu(network)
+  while true do
+    print("\n=== Singularity Crafter Menu ===")
+    print("1. Craft Gold Singularity")
+    print("2. Craft Iron Singularity")
+    print("3. Craft Diamond Singularity")
+    print("4. Test item movement (debug)")
+    print("5. Show detected setup")
+    print("6. Exit")
+    print("================================")
+    io.write("Select option (1-6): ")
+    
+    local choice = io.read()
+    
+    if choice == "1" then
+      craftSingularity(network, "Gold")
+    elseif choice == "2" then
+      craftSingularity(network, "Iron")
+    elseif choice == "3" then
+      craftSingularity(network, "Diamond")
+    elseif choice == "4" then
+      print("\nTesting item movement...")
+      print("This will attempt to move 1 Crystalline Catalyst from AE2 to buffer")
+      moveByRole(network, "ae2_to_buffer", "Crystalline Catalyst", 1)
+    elseif choice == "5" then
+      print("\n=== Current Setup ===")
+      for i, t in ipairs(network) do
+        print(string.format("%d. Role: %s", i, t.role))
+        print(string.format("   From: side %d, To: side %d", t.from, t.to))
+      end
+      print("====================")
+    elseif choice == "6" then
+      print("Exiting...")
+      break
+    else
+      print("Invalid choice. Please enter 1-6.")
+    end
+  end
+end
+
+-------------------------------------------------------------------
 -- Startup
 -------------------------------------------------------------------
 
 print("Initializing Singularity Crafter...")
 local network = detectTransposers()
 
-print("\nReady! Available recipes:")
-for name, _ in pairs(SINGULARITY_RECIPES) do
-  print("  - " .. name)
-end
-print("\nTo craft, use: craftSingularity(network, \"Gold\")")
-print("Or uncomment the examples at the bottom of the script.\n")
-
--- Example usage (uncomment to use):
--- craftSingularity(network, "Gold")
--- craftSingularity(network, "Iron")
--- craftSingularity(network, "Diamond")
+print("\nReady! Starting menu...\n")
+showMenu(network)
