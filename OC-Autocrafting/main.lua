@@ -174,7 +174,7 @@ end
 -- Utility functions
 -------------------------------------------------------------------
 
-local function moveItems(tp, fromSide, target_tp, toSide, filterName, maxAmount)
+function moveItems(tp, fromSide, target_tp, toSide, filterName, maxAmount)
   print(string.format("[DEBUG] moveItems called: filter='%s', amount=%d", filterName, maxAmount))
   print(string.format("[DEBUG] From side %d to side %d", fromSide, toSide))
   
@@ -224,7 +224,7 @@ end
 -- Scalable operations
 -------------------------------------------------------------------
 
-local function moveByRole(network, role, itemName, amount)
+function moveByRole(network, role, itemName, amount)
   local total_moved = 0
   for _, t in ipairs(network) do
     if t.role == role then
@@ -236,7 +236,7 @@ local function moveByRole(network, role, itemName, amount)
   return total_moved
 end
 
-local function requestItems(network, recipe)
+function requestItems(network, recipe)
   print("Requesting items from AE2 Interface...")
   for _, item in ipairs(recipe) do
     print(string.format("Requesting %d x %s", item[2], item[1]))
@@ -245,7 +245,7 @@ local function requestItems(network, recipe)
   print("Items requested.\n")
 end
 
-local function feedMachine(network, recipe)
+function feedMachine(network, recipe)
   print("Feeding Quantum Compressor...")
   for _, item in ipairs(recipe) do
     print(string.format("Feeding %d x %s", item[2], item[1]))
@@ -254,7 +254,7 @@ local function feedMachine(network, recipe)
   print("Machine fed.\n")
 end
 
-local function collectOutput(network)
+function collectOutput(network)
   print("Collecting output from Quantum Compressor...")
   local collected = false
   
@@ -288,7 +288,7 @@ end
 -- Main Crafting Function
 -------------------------------------------------------------------
 
-local function craftSingularity(network, name)
+function craftSingularity(network, name)
   local recipe = SINGULARITY_RECIPES[name]
   if not recipe then 
     error("Recipe for " .. name .. " not found!") 
@@ -307,13 +307,13 @@ end
 -- Helper Functions
 -------------------------------------------------------------------
 
-local function testMovement(network)
+function testMovement(network)
   print("\nTesting item movement...")
   print("This will attempt to move 1 Crystalline Catalyst from AE2 to buffer")
   moveByRole(network, "ae2_to_buffer", "Crystalline Catalyst", 1)
 end
 
-local function showSetup(network)
+function showSetup(network)
   print("\n=== Current Setup ===")
   for i, t in ipairs(network) do
     print(string.format("%d. Role: %s", i, t.role))
@@ -327,7 +327,7 @@ end
 -------------------------------------------------------------------
 
 print("Initializing Singularity Crafter...")
-local network = detectTransposers()
+network = detectTransposers()
 
 print("\n=== Singularity Crafter Ready ===")
 print("\nAvailable commands:")
@@ -338,6 +338,3 @@ print("  craftSingularity(network, \"Iron\")    - Craft Iron Singularity")
 print("  craftSingularity(network, \"Diamond\") - Craft Diamond Singularity")
 print("\nExample: craftSingularity(network, \"Gold\")")
 print("===================================\n")
-
--- Return network so it's available in the shell
-return network
