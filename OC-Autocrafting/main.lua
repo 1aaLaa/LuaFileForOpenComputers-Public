@@ -317,9 +317,12 @@ local function showMenu(network)
     print("5. Show detected setup")
     print("6. Exit")
     print("================================")
-    io.write("Select option (1-6): ")
+    print("Select option (1-6): ")
     
-    local choice = io.read()
+    local choice = read()
+    if choice then
+      choice = choice:gsub("%s+", "") -- Remove whitespace
+    end
     
     if choice == "1" then
       craftSingularity(network, "Gold")
