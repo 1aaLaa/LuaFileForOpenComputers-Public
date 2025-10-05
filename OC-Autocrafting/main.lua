@@ -27,21 +27,35 @@ local SINGULARITY_RECIPES = {
 local function detectTransposers()
   local transposers = {}
 
-  for addr in component.list("transposer") do
+  print("[DEBUG] Starting component.list search for transposers...")
+  local count = 0
+  for addr, ctype in component.list("transposer") do
+    count = count + 1
+    print(string.format("[DEBUG] Found transposer #%d: %s (type: %s)", count, addr, ctype))
+    
     local success, tp = pcall(component.proxy, addr)
     if success and tp then
+      print("[DEBUG] Successfully proxied transposer")
       local connections = {}
       for s = 0, 5 do
         local success2, name = pcall(tp.getInventoryName, s)
         if success2 and name then
+          print(string.format("[DEBUG] Side %d has inventory: %s", s, name))
           connections[#connections + 1] = {side = s, name = tostring(name):lower()}
+        else
+          print(string.format("[DEBUG] Side %d: no inventory or error", s))
         end
       end
       transposers[#transposers + 1] = {tp = tp, addr = addr, connections = connections}
+      print(string.format("[DEBUG] Added transposer with %d connections", #connections))
     else
-      print("Warning: Could not proxy transposer " .. addr:sub(1, 8))
+      print("Warning: Could not proxy transposer " .. tostring(addr))
+      print("[DEBUG] Error: " .. tostring(tp))
     end
   end
+  
+  print(string.format("[DEBUG] Total transposers found: %d", count))
+  print(string.format("[DEBUG] Total transposers added to table: %d", #transposers))
 
   print("\n=== Transposer Detection ===")
   for _, t in ipairs(transposers) do
