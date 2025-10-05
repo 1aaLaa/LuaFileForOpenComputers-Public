@@ -323,6 +323,72 @@ function showSetup(network)
 end
 
 -------------------------------------------------------------------
+-- Simple Shell
+-------------------------------------------------------------------
+
+function runShell(network)
+  print("\n=== Simple Command Shell ===")
+  print("Type 'help' for commands, 'exit' to quit")
+  
+  while true do
+    print("\n> ")
+    local input = ""
+    
+    -- Simple character-by-character input
+    local gpu = component.gpu
+    local x, y = gpu.get()
+    
+    while true do
+      local _, _, char, code = event.pull("key_down")
+      
+      if code == 28 then -- Enter key
+        print("")
+        break
+      elseif code == 14 then -- Backspace
+        if #input > 0 then
+          input = input:sub(1, -2)
+          x = x - 1
+          gpu.set(x, y, " ")
+          gpu.set(x, y, "")
+        end
+      elseif char > 0 then
+        input = input .. string.char(char)
+        gpu.set(x, y, string.char(char))
+        x = x + 1
+      end
+    end
+    
+    input = input:gsub("^%s*(.-)%s*$", "%1") -- Trim whitespace
+    
+    if input == "exit" or input == "quit" then
+      print("Exiting...")
+      break
+    elseif input == "help" then
+      print("\nAvailable commands:")
+      print("  setup    - Show detected transposer setup")
+      print("  test     - Test moving 1 item")
+      print("  gold     - Craft Gold Singularity")
+      print("  iron     - Craft Iron Singularity")
+      print("  diamond  - Craft Diamond Singularity")
+      print("  help     - Show this help")
+      print("  exit     - Exit the shell")
+    elseif input == "setup" then
+      showSetup(network)
+    elseif input == "test" then
+      testMovement(network)
+    elseif input == "gold" then
+      craftSingularity(network, "Gold")
+    elseif input == "iron" then
+      craftSingularity(network, "Iron")
+    elseif input == "diamond" then
+      craftSingularity(network, "Diamond")
+    elseif input ~= "" then
+      print("Unknown command: " .. input .. " (type 'help' for commands)")
+    end
+  end
+end
+
+-------------------------------------------------------------------
 -- Startup
 -------------------------------------------------------------------
 
@@ -330,11 +396,5 @@ print("Initializing Singularity Crafter...")
 network = detectTransposers()
 
 print("\n=== Singularity Crafter Ready ===")
-print("\nAvailable commands:")
-print("  showSetup(network)           - Show detected transposer setup")
-print("  testMovement(network)        - Test moving 1 item")
-print("  craftSingularity(network, \"Gold\")    - Craft Gold Singularity")
-print("  craftSingularity(network, \"Iron\")    - Craft Iron Singularity")
-print("  craftSingularity(network, \"Diamond\") - Craft Diamond Singularity")
-print("\nExample: craftSingularity(network, \"Gold\")")
-print("===================================\n")
+print("Starting interactive shell...")
+runShell(network)
