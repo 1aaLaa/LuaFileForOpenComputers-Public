@@ -396,8 +396,41 @@ end
 -------------------------------------------------------------------
 
 print("Initializing Singularity Crafter...")
-network = detectTransposers()
+
+local success, result = pcall(detectTransposers)
+if not success then
+  print("[ERROR] Failed to detect transposers:")
+  print(result)
+  error("Cannot continue without transposers")
+end
+network = result
 
 print("\n=== Singularity Crafter Ready ===")
-print("Starting interactive shell...")
-runShell(network)
+print("\nShowing detected setup:")
+
+success, result = pcall(showSetup, network)
+if not success then
+  print("[ERROR] Failed to show setup:")
+  print(result)
+end
+
+print("\n=== Running Test ===")
+print("Testing item movement with 1 Crystalline Catalyst...")
+
+success, result = pcall(testMovement, network)
+if not success then
+  print("[ERROR] Failed during test movement:")
+  print(result)
+else
+  print("[DEBUG] Test movement completed without errors")
+end
+
+print("\n=== Test Complete ===")
+print("\nTo craft singularities, edit the script and uncomment one of these lines:")
+print("-- craftSingularity(network, 'Gold')")
+print("-- craftSingularity(network, 'Iron')")  
+print("-- craftSingularity(network, 'Diamond')")
+print("\nOr call them from Lua: craftSingularity(network, 'Gold')")
+
+-- Uncomment the line below to automatically craft:
+-- craftSingularity(network, "Gold")
